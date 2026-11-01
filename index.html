@@ -25,7 +25,7 @@ small{color:#bbb;display:block;margin-top:6px;line-height:1.4}
 <div id="setup"><div id="box">
   <h1>🎃 Spooky Door Cam 🎃</h1>
   <button id="useCam">▶ START with this tablet's camera</button>
-  <small>Best option. Point the tablet at the door, turn the volume all the way up. It stays dark and silent until someone walks right up &mdash; then it scares them.</small>
+  <small>Best option. Point the tablet at the door, turn the volume all the way up. It only scares when someone walks right up to the door.</small><br><small>Fire HD: Settings &rarr; Display &rarr; Sleep &rarr; Never, and keep it plugged in.</small>
   <br>
   <input id="url" placeholder="or paste camera SNAPSHOT / MJPEG http:// address">
   <button id="useUrl" class="alt">▶ START with network camera</button>
@@ -335,6 +335,7 @@ var SFX=[
 function playSfx(i){ if(!AC) return 0; var t=AC.currentTime+0.02;
   if(typeof i==='string'){ if(i==='thunder'){SFX[1](t);return 1.4;} var d=playClip(i,t); if(d) return d; i=0; }
   SFX[i%SFX.length](t); return 1.2; }
+function rumble(){ if(!AC) return; var t=AC.currentTime+0.02; noise(t,2.5,0.10); tone('sine',60,32,t,2.0,0.10); }
 function playScare(){
   if(!AC) return;
   var t=AC.currentTime+0.02;
@@ -439,7 +440,8 @@ function detect(){
 }
 
 /* ---------- MAIN LOOP ---------- */
-var faces=[], tracked=[], lastFace=0, firstFace=0, present=false, current=0, lastAnnounce=0, idleT=0, closeFirst=0, cooldownUntil=0, flash=0;
+var faces=[], tracked=[], lastFace=0, firstFace=0, present=false, current=0, lastAnnounce=0, idleT=0, closeFirst=0, cooldownUntil=0, flash=0, eyeT=Date.now()+5000, eyeOn=0, eyeX=0.5, eyeY=0.3, boltT=Date.now()+9000, boltA=0, batT=Date.now()+6000, batX=2, batY=0.2;
+var EMBERS=[]; for(var ei=0;ei<24;ei++) EMBERS.push([Math.random(),Math.random(),0.5+Math.random()*1.5]);
 var order=[]; function nextCostume(){ if(!order.length){order=COSTUMES.map(function(_,i){return i;}).sort(function(){return Math.random()-.5;});} return order.pop(); }
 var lineIdx={};
 function scare(){
@@ -484,6 +486,26 @@ function loop(){
       var fx=((now*0.02*(fi+1)+fi*W*0.4)%(W+400))-200, fy=H*(0.25+fi*0.25)+Math.sin(now/3000+fi*2)*H*0.04;
       ctx.beginPath(); ctx.ellipse(fx,fy,W*0.28,H*0.09,0,0,Math.PI*2); ctx.fill();
     }
+    // eyes in the dark: fade in, blink, fade out
+    if(now>eyeT){ eyeT=now+9000+Math.random()*8000; eyeOn=now; eyeX=0.25+Math.random()*0.5; eyeY=0.2+Math.random()*0.45; }
+    var et=(now-eyeOn)/2600;
+    if(et>0&&et<1){
+      var ea=Math.sin(Math.PI*et); if(et>0.45&&et<0.55) ea*=0.15;
+      ctx.save(); ctx.globalAlpha=ea; ctx.shadowColor='#f00'; ctx.shadowBlur=18; ctx.fillStyle='#ff2020';
+      var er2=Math.max(3,Math.min(W,H)*0.014), ex2=W*0.035;
+      ctx.beginPath(); ctx.arc(eyeX*W-ex2,eyeY*H,er2,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(eyeX*W+ex2,eyeY*H,er2,0,Math.PI*2); ctx.fill(); ctx.restore();
+    }
+    // distant lightning: flash now, low rumble a second later
+    if(now>boltT){ boltT=now+12000+Math.random()*14000; boltA=1; setTimeout(function(){ rumble(); },1200); }
+    if(boltA>0){ ctx.fillStyle='rgba(200,210,255,'+(boltA*0.28)+')'; ctx.fillRect(0,0,W,H); boltA=Math.max(0,boltA-0.06); }
+    // a bat crosses the dark
+    if(now>batT){ batT=now+9000+Math.random()*12000; batX=-0.15; batY=0.12+Math.random()*0.25; }
+    if(batX<1.15){
+      batX+=0.006; var flap=Math.sin(now/90)*0.5, bx=batX*W, by=batY*H, bs=Math.min(W,H)*0.045;
+      ctx.save(); ctx.strokeStyle='rgba(0,0,0,0.9)'; ctx.lineWidth=Math.max(2,bs*0.12);
+      ctx.beginPath(); ctx.moveTo(bx-bs,by); ctx.quadraticCurveTo(bx-bs*0.5,by-bs*(0.7+flap),bx,by); ctx.quadraticCurveTo(bx+bs*0.5,by-bs*(0.7-flap),bx+bs,by); ctx.stroke(); ctx.restore();
+    }
   } else {
     // haunted: flicker + red edge
     if(Math.random()<0.03){ ctx.fillStyle='rgba(255,255,255,0.10)'; ctx.fillRect(0,0,W,H); }
@@ -513,14 +535,14 @@ function loop(){
     if(!present && closeFace.length && closeFirst && now-closeFirst>900 && now>=cooldownUntil){ present=true; scare(); }
     if(present && now-lastFace>4000){ present=false; cap.textContent=''; idleT=now; cooldownUntil=now+5000; closeFirst=0; }
     if(present && now-lastAnnounce>15000){ announce(); } // same kids hanging around -> new costume
-    if(present || now-lastFace<1200) tracked.forEach(function(f){
+    if(present || now-lastFace<1200){ ctx.save(); if(flash>0.5) ctx.translate((Math.random()-0.5)*18*flash,(Math.random()-0.5)*18*flash); tracked.forEach(function(f){
       COSTUMES[current].draw(f.x,f.y,f.s);
       // glowing red eyes on every face while haunted
       var ex=f.s*0.18, ey=f.y-f.s*0.06, er=Math.max(2,f.s*0.035);
       ctx.save(); ctx.shadowColor='#f00'; ctx.shadowBlur=f.s*0.12;
       ctx.fillStyle='#ff1818'; ctx.beginPath(); ctx.arc(f.x-ex,ey,er,0,Math.PI*2); ctx.fill();
       ctx.beginPath(); ctx.arc(f.x+ex,ey,er,0,Math.PI*2); ctx.fill(); ctx.restore();
-    });
+    }); ctx.restore(); }
   } else {
     // timer mode (no face tracking): scare on a slow timer instead of chattering every 20s
     if(now-lastAnnounce>45000) scare();
@@ -533,21 +555,47 @@ function loop(){
     ctx.fillText('...',W/2,H*.12);
   }
   if(flash>0){ ctx.fillStyle='rgba(255,255,255,'+(flash*0.65)+')'; ctx.fillRect(0,0,W,H); flash=Math.max(0,flash-0.05); }
+  for(var ei2=0;ei2<EMBERS.length;ei2++){
+    var eb=EMBERS[ei2], eyy=((eb[1]-now*0.000008*eb[2])%1+1)%1;
+    ctx.fillStyle='rgba(255,'+Math.floor(100+eb[2]*60)+',20,'+(0.22+0.18*Math.sin(now/500+eb[0]*9)).toFixed(2)+')';
+    ctx.beginPath(); ctx.arc(eb[0]*W+Math.sin(now/1500+eb[1]*20)*8, eyy*H, Math.max(1.5,eb[2]*2.2), 0, Math.PI*2); ctx.fill();
+  }
 }
 
 /* ---------- KEEP SCREEN ON ---------- */
-var lock=null;
+var KEEPVID="data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAOxbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAA+gAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAtt0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAA+gAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAIAAAACAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAPoAAAIAAABAAAAAAJTbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAAAoAAAAKABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAAB/m1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAb5zdGJsAAAAvnN0c2QAAAAAAAAAAQAAAK5hdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAIAAgBIAAAASAAAAAAAAAABFUxhdmM2Mi4yOC4xMDIgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAANGF2Y0MBZAAK/+EAGWdkAAqs2V+IiMBEAAADAAQAAAMAUDxIllgBAARo74nL/fj4AAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAABmwAAAAAAAAABhzdHRzAAAAAAAAAAEAAAAKAAAEAAAAABRzdHNzAAAAAAAAAAEAAAABAAAAYGN0dHMAAAAAAAAACgAAAAEAAAgAAAAAAQAAFAAAAAABAAAIAAAAAAEAAAAAAAAAAQAABAAAAAABAAAUAAAAAAEAAAgAAAAAAQAAAAAAAAABAAAEAAAAAAEAAAgAAAAAHHN0c2MAAAAAAAAAAQAAAAEAAAAKAAAAAQAAADxzdHN6AAAAAAAAAAAAAAAKAAACxgAAAAwAAAAMAAAADAAAAAwAAAANAAAADgAAAAwAAAAMAAAADQAAABRzdGNvAAAAAAAAAAEAAAPhAAAAYnVkdGEAAABabWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAbWRpcmFwcGwAAAAAAAAAAAAAAAAtaWxzdAAAACWpdG9vAAAAHWRhdGEAAAABAAAAAExhdmY2Mi4xMi4xMDIAAAAIZnJlZQAAAz5tZGF0AAACrQYF//+p3EXpvebZSLeWLNgg2SPu73gyNjQgLSBjb3JlIDE2NCByMzEwOCAzMWUxOWY5IC0gSC4yNjQvTVBFRy00IEFWQyBjb2RlYyAtIENvcHlsZWZ0IDIwMDMtMjAyMyAtIGh0dHA6Ly93d3cudmlkZW9sYW4ub3JnL3gyNjQuaHRtbCAtIG9wdGlvbnM6IGNhYmFjPTEgcmVmPTEgZGVibG9jaz0xOjA6MCBhbmFseXNlPTB4MzoweDExMyBtZT1oZXggc3VibWU9MiBwc3k9MSBwc3lfcmQ9MS4wMDowLjAwIG1peGVkX3JlZj0wIG1lX3JhbmdlPTE2IGNocm9tYV9tZT0xIHRyZWxsaXM9MCA4eDhkY3Q9MSBjcW09MCBkZWFkem9uZT0yMSwxMSBmYXN0X3Bza2lwPTEgY2hyb21hX3FwX29mZnNldD0wIHRocmVhZHM9MSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTMgYl9weXJhbWlkPTIgYl9hZGFwdD0xIGJfYmlhcz0wIGRpcmVjdD0xIHdlaWdodGI9MSBvcGVuX2dvcD0wIHdlaWdodHA9MSBrZXlpbnQ9MjUwIGtleWludF9taW49MTAgc2NlbmVjdXQ9NDAgaW50cmFfcmVmcmVzaD0wIHJjX2xvb2thaGVhZD0xMCByYz1jcmYgbWJ0cmVlPTEgY3JmPTI4LjAgcWNvbXA9MC42MCBxcG1pbj0wIHFwbWF4PTY5IHFwc3RlcD00IGlwX3JhdGlvPTEuNDAgYXE9MToxLjAwAIAAAAARZYiEABH/0nge7+1TlHAxP/kAAAAIQZokGIIf/uAAAAAIQZ5CQh3/x4EAAAAIAZ5hRDf/yoAAAAAIAZ5jRDf/yoEAAAAJQZpoNExDv/7BAAAACkGehkURLDv/x4EAAAAIAZ6lRDf/yoEAAAAIAZ6nRDf/yoAAAAAJQZqpNExDf/7A";
+var lock=null, wakeTimer=null, keepVid=null;
+function pokeVid(v){ try{ if(v&&v.paused){ var p=v.play(); if(p&&p.catch) p.catch(function(){}); } }catch(e){} }
 function keepAwake(){
-  try{ if(navigator.wakeLock&&navigator.wakeLock.request) navigator.wakeLock.request('screen').then(function(l){lock=l;}).catch(function(){}); }catch(e){}
+  try{
+    if(navigator.wakeLock&&navigator.wakeLock.request) navigator.wakeLock.request('screen').then(function(l){
+      lock=l;
+      if(l&&l.addEventListener) l.addEventListener('release',function(){ setTimeout(keepAwake,1000); });
+    }).catch(function(){});
+  }catch(e){}
+  pokeVid(keepVid);
+  try{ if(src&&src.tagName==='VIDEO') pokeVid(src); }catch(e){}
+}
+function startKeepAwake(){
+  keepAwake();
+  if(!wakeTimer) wakeTimer=setInterval(keepAwake,20000); // Fire OS can drop the lock; re-ask every 20s
+  if(!keepVid){
+    keepVid=document.createElement('video');
+    keepVid.setAttribute('playsinline',''); keepVid.muted=true; keepVid.loop=true;
+    keepVid.style.cssText='position:fixed;width:2px;height:2px;left:0;bottom:0;opacity:0.01;pointer-events:none;';
+    keepVid.src=KEEPVID;
+    document.body.appendChild(keepVid);
+    pokeVid(keepVid);
+  }
 }
 document.addEventListener('visibilitychange',function(){ if(document.visibilityState==='visible'){keepAwake(); audioInit();} });
+['touchstart','pointerdown','click'].forEach(function(ev){ document.addEventListener(ev,keepAwake,{passive:true}); });
 function goFull(){ var d=document.documentElement,f=d.requestFullscreen||d.webkitRequestFullscreen; if(f){try{f.call(d);}catch(e){}} }
 
 function begin(){
   document.getElementById('setup').style.display='none';
-  goFull(); keepAwake();
+  goFull(); startKeepAwake();
   if(!running){ running=true; loop(); }
-  info.textContent='\u25CF ARMED \u2014 dark and silent until someone walks up';
   cap.textContent='';
 }
 var msg=document.getElementById('msg');
