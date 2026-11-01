@@ -428,7 +428,7 @@ function gray(rgba){
   for(var i=0,j=0;i<n;i++,j+=4) g[i]=(2*rgba[j]+7*rgba[j+1]+rgba[j+2])/10;
   return g;
 }
-var params={shiftfactor:0.1,minsize:24,maxsize:400,scalefactor:1.1};
+var params={shiftfactor:0.1,minsize:20,maxsize:400,scalefactor:1.1};
 function detect(){
   if(!canDetect) return [];
   var rgba;
@@ -440,7 +440,7 @@ function detect(){
 }
 
 /* ---------- MAIN LOOP ---------- */
-var faces=[], tracked=[], lastFace=0, firstFace=0, present=false, current=0, lastAnnounce=0, idleT=0, closeFirst=0, cooldownUntil=0, flash=0, eyeT=Date.now()+5000, eyeOn=0, eyeX=0.5, eyeY=0.3, boltT=Date.now()+9000, boltA=0, batT=Date.now()+6000, batX=2, batY=0.2;
+var faces=[], tracked=[], lastFace=0, firstFace=0, present=false, current=0, lastAnnounce=0, idleT=0, closeFirst=0, cooldownUntil=0, flash=0, drawTick=0, eyeT=Date.now()+5000, eyeOn=0, eyeX=0.5, eyeY=0.3, boltT=Date.now()+9000, boltA=0, batT=Date.now()+6000, batX=2, batY=0.2;
 var EMBERS=[]; for(var ei=0;ei<24;ei++) EMBERS.push([Math.random(),Math.random(),0.5+Math.random()*1.5]);
 var order=[]; function nextCostume(){ if(!order.length){order=COSTUMES.map(function(_,i){return i;}).sort(function(){return Math.random()-.5;});} return order.pop(); }
 var lineIdx={};
@@ -450,7 +450,7 @@ function scare(){
   var line=c.lines[lineIdx[current]];
   flash=1;
   playScare();
-  setTimeout(function(){say(line,c.pitch,c.rate);},1100);
+  setTimeout(function(){say(line,c.pitch,c.rate);},350);
   cap.textContent=line; lastAnnounce=Date.now();
 }
 function announce(){
@@ -471,16 +471,18 @@ function loop(){
   requestAnimationFrame(loop);
   var sz=srcSize(); if(!sz[0]||!sz[1]) return;
   var W=C.width,H=C.height, sc=Math.max(W/sz[0],H/sz[1]), dw=sz[0]*sc, dh=sz[1]*sc, ox=(W-dw)/2, oy=(H-dh)/2;
-  // draw camera
-  ctx.save(); if(mirror){ctx.translate(W,0);ctx.scale(-1,1);}
-  try{ctx.drawImage(src,ox,oy,dw,dh);}catch(e){}
-  ctx.restore();
+  // draw camera (dormant: only every 4th frame — it's nearly black anyway, save CPU for detection)
+  if(present || (drawTick++%4===0)){
+    ctx.save(); if(mirror){ctx.translate(W,0);ctx.scale(-1,1);}
+    try{ctx.drawImage(src,ox,oy,dw,dh);}catch(e){}
+    ctx.restore();
+  }
   // spooky tint + vignette
   var vg=ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*.3,W/2,H/2,Math.max(W,H)*.75);
   vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(40,0,60,.75)'); ctx.fillStyle=vg; ctx.fillRect(0,0,W,H);
   // dormant: nearly black until someone walks up; slow fog drifts across the dark
   if(!present){
-    ctx.fillStyle='rgba(0,0,0,0.86)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='rgba(0,0,0,'+(faces.length?0.55:0.86)+')'; ctx.fillRect(0,0,W,H);
     ctx.fillStyle='rgba(120,110,160,0.07)';
     for(var fi=0;fi<3;fi++){
       var fx=((now*0.02*(fi+1)+fi*W*0.4)%(W+400))-200, fy=H*(0.25+fi*0.25)+Math.sin(now/3000+fi*2)*H*0.04;
@@ -528,12 +530,15 @@ function loop(){
       if(best&&bd<f.s){return {x:best.x*.6+f.x*.4,y:best.y*.6+f.y*.4,s:best.s*.7+f.s*.3};} return f;});
   }
   if(canDetect){
-    // proximity = face is BIG on screen (walked right up), not just visible far away
-    var closeFace=faces.filter(function(f){ return f.s>Math.min(W,H)*0.20; });
-    if(closeFace.length){ if(!closeFirst) closeFirst=now; lastFace=now; }
-    else if(now-lastFace>600){ closeFirst=0; firstFace=0; }
-    if(!present && closeFace.length && closeFirst && now-closeFirst>900 && now>=cooldownUntil){ present=true; scare(); }
-    if(present && now-lastFace>4000){ present=false; cap.textContent=''; idleT=now; cooldownUntil=now+5000; closeFirst=0; }
+    // FAST path: a BIG face up close (walked right up) — 0.5s is enough
+    // SLOW path: ANY face hanging at the door for 3s also triggers (far/small faces)
+    var closeFace=faces.filter(function(f){ return f.s>Math.min(W,H)*0.12; });
+    if(faces.length){ if(!firstFace) firstFace=now; lastFace=now; }
+    if(closeFace.length){ if(!closeFirst) closeFirst=now; }
+    else if(now-lastFace>1500){ closeFirst=0; firstFace=0; }
+    if(!present && closeFace.length && closeFirst && now-closeFirst>500 && now>=cooldownUntil){ present=true; scare(); }
+    else if(!present && firstFace && now-firstFace>3000 && now>=cooldownUntil){ present=true; scare(); }
+    if(present && now-lastFace>4000){ present=false; cap.textContent=''; idleT=now; cooldownUntil=now+5000; closeFirst=0; firstFace=0; }
     if(present && now-lastAnnounce>15000){ announce(); } // same kids hanging around -> new costume
     if(present || now-lastFace<1200){ ctx.save(); if(flash>0.5) ctx.translate((Math.random()-0.5)*18*flash,(Math.random()-0.5)*18*flash); tracked.forEach(function(f){
       COSTUMES[current].draw(f.x,f.y,f.s);
