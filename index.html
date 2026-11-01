@@ -15,7 +15,7 @@ button.alt{background:#6b2fa0;color:#fff}
 input{font-size:18px;padding:12px;width:100%;box-sizing:border-box;border-radius:8px;border:0;margin-top:8px}
 small{color:#bbb;display:block;margin-top:6px;line-height:1.4}
 #msg{color:#ff5050;margin-top:10px;font-size:16px}
-#cap{position:fixed;left:0;right:0;bottom:4%;text-align:center;font-size:7vmin;font-weight:bold;color:#ffde59;text-shadow:0 0 12px #f0f,3px 3px 0 #000,-3px -3px 0 #000,3px -3px 0 #000,-3px 3px 0 #000;padding:0 4%;z-index:3}
+#cap{position:fixed;left:0;right:0;bottom:4%;text-align:center;font-size:7vmin;font-weight:bold;color:#ff2222;text-shadow:0 0 18px #f00,0 0 40px #800,3px 3px 0 #000,-3px -3px 0 #000,3px -3px 0 #000,-3px 3px 0 #000;padding:0 4%;z-index:3}
 #info{position:fixed;top:6px;right:8px;font-size:12px;color:#666;z-index:3}
 </style>
 </head><body>
@@ -25,11 +25,11 @@ small{color:#bbb;display:block;margin-top:6px;line-height:1.4}
 <div id="setup"><div id="box">
   <h1>🎃 Spooky Door Cam 🎃</h1>
   <button id="useCam">▶ START with this tablet's camera</button>
-  <small>Best option. Point the tablet at the door, turn the volume all the way up.</small>
+  <small>Best option. Point the tablet at the door, turn the volume all the way up. It stays dark and silent until someone walks right up &mdash; then it scares them.</small>
   <br>
   <input id="url" placeholder="or paste camera SNAPSHOT / MJPEG http:// address">
   <button id="useUrl" class="alt">▶ START with network camera</button>
-  <small>rtsp:// addresses can't play in any web browser. Use your camera's http snapshot or MJPEG address instead (look it up in the camera's manual). Face tracking only works if the camera allows it; otherwise costumes rotate on a timer.</small>
+  <small>rtsp:// addresses can't play in any web browser. Use your camera's http snapshot or MJPEG address instead (look it up in the camera's manual). Face tracking only works if the camera allows it; otherwise it scares on a slow timer instead.</small>
   <div id="msg"></div>
   <button id="testSnd" class="alt" style="margin-top:16px">🔊 Test sound</button>
 </div></div>
@@ -255,7 +255,21 @@ function resize(){C.width=window.innerWidth;C.height=window.innerHeight;}
 window.addEventListener('resize',resize); resize();
 
 /* ---------- LOUD AUDIO ---------- */
-var AC=null, master=null;
+var AC=null, master=null, windGain=null;
+function startWind(){
+  if(!AC||windGain) return;
+  try{
+    var len=AC.sampleRate*3, b=AC.createBuffer(1,len,AC.sampleRate), d=b.getChannelData(0), last=0;
+    for(var i=0;i<len;i++){ var w=Math.random()*2-1; last=(last+0.02*w)/1.02; d[i]=last*3.2; }
+    var s=AC.createBufferSource(); s.buffer=b; s.loop=true;
+    var f=AC.createBiquadFilter(); f.type='lowpass'; f.frequency.value=420;
+    windGain=AC.createGain(); windGain.gain.value=0.05;
+    s.connect(f); f.connect(windGain); windGain.connect(master); s.start();
+    var lfo=AC.createOscillator(), lg=AC.createGain(); lfo.frequency.value=0.07; lg.gain.value=0.03;
+    lfo.connect(lg); lg.connect(windGain.gain); lfo.start();
+  }catch(e){}
+}
+function windSwell(v){ if(windGain) windGain.gain.setTargetAtTime(v, AC.currentTime, 0.8); }
 function audioInit(){
   if(AC) {if(AC.resume)AC.resume();return;}
   var A=window.AudioContext||window.webkitAudioContext; if(!A) return;
@@ -264,6 +278,7 @@ function audioInit(){
   master=AC.createGain(); master.gain.value=1.0;
   master.connect(comp); comp.connect(AC.destination);
   decodeClips();
+  startWind();
 }
 function tone(type,f1,f2,t0,dur,vol){
   var o=AC.createOscillator(), g=AC.createGain();
@@ -320,6 +335,16 @@ var SFX=[
 function playSfx(i){ if(!AC) return 0; var t=AC.currentTime+0.02;
   if(typeof i==='string'){ if(i==='thunder'){SFX[1](t);return 1.4;} var d=playClip(i,t); if(d) return d; i=0; }
   SFX[i%SFX.length](t); return 1.2; }
+function playScare(){
+  if(!AC) return;
+  var t=AC.currentTime+0.02;
+  SFX[1](t); // thunder crash (synth: always ready, even if MP3s are still decoding)
+  playClip('ghost-scream', t+0.05);
+  setTimeout(function(){ playClip('evil-laugh', AC.currentTime+0.02); }, 900);
+  setTimeout(function(){ playClip('funeral-bells', AC.currentTime+0.02); }, 1800);
+  windSwell(0.12);
+  setTimeout(function(){ windSwell(0.05); }, 6000);
+}
 
 var voices=[];
 function loadVoices(){ if(window.speechSynthesis) voices=speechSynthesis.getVoices()||[]; }
@@ -341,76 +366,60 @@ function say(text,pitch,rate){
 // x,y = face center (screen px), s = face size (screen px)
 function circle(x,y,r,fill){ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fillStyle=fill;ctx.fill();}
 var COSTUMES=[
- {name:'clown', sfx:'cuckoo-clock', pitch:1.6, rate:1.1, draw:function(x,y,s){
+ {name:'clown', sfx:'ghost-scream', pitch:0.5, rate:0.8, draw:function(x,y,s){
    var g=ctx.createRadialGradient(x-s*.03,y-s*.03,s*.01,x,y+s*.05,s*.12);
    g.addColorStop(0,'#ff9a9a'); g.addColorStop(1,'#d00000');
    circle(x,y+s*.06,s*.11,g);
    ['#ff3fa4','#3fd0ff','#ffe23f','#7cff3f'].forEach(function(c,i){
      circle(x-s*.55+i*0.03*s,y-s*.35+i*s*.12,s*.16,c); circle(x+s*.55-i*0.03*s,y-s*.35+i*s*.12,s*.16,c);});
- }, lines:["Honk honk! A clown nose for you! Now you're officially too silly to be scary!",
-           "Welcome to the creepy circus! Your nose is now a giant red cherry!",
-           "Ha ha ha! Even the ghosts are laughing at that nose!"]},
- {name:'witch', sfx:'evil-laugh', pitch:1.8, rate:1.05, draw:function(x,y,s){
+ }, lines:["You came closer... big mistake.", "The clown sees you. The clown remembers you.", "Stay a while... forever."]},
+ {name:'witch', sfx:'evil-laugh', pitch:0.6, rate:0.8, draw:function(x,y,s){
    ctx.fillStyle='#1a0a24'; ctx.strokeStyle='#8a2be2'; ctx.lineWidth=s*.03;
    ctx.beginPath(); ctx.ellipse?ctx.ellipse(x,y-s*.5,s*.75,s*.13,0,0,Math.PI*2):ctx.rect(x-s*.75,y-s*.6,s*1.5,s*.2); ctx.fill(); ctx.stroke();
    ctx.beginPath(); ctx.moveTo(x-s*.38,y-s*.52); ctx.lineTo(x+s*.25,y-s*1.5); ctx.lineTo(x+s*.38,y-s*.52); ctx.closePath(); ctx.fill(); ctx.stroke();
    ctx.fillStyle='#ff7a00'; ctx.fillRect(x-s*.36,y-s*.7,s*.72,s*.1);
    circle(x+s*.02,y+s*.16,s*.04,'#3fae3f'); circle(x+s*.05,y+s*.13,s*.015,'#235f23');
- }, lines:["Hee hee hee! A witch's hat and a warty nose! Double, double, candy trouble!",
-           "Abracadabra! I turned you into a witch! Don't worry, it wears off after candy.",
-           "Cackle cackle! My broom is parked out back. Want to see it?"]},
- {name:'devil', sfx:'thunder', pitch:0.6, rate:0.9, draw:function(x,y,s){
+ }, lines:["I have been waiting for you...", "Double, double... you are mine now.", "The witch has your shadow now."]},
+ {name:'devil', sfx:'thunder', pitch:0.4, rate:0.75, draw:function(x,y,s){
    ctx.fillStyle='#e00000'; ctx.strokeStyle='#600'; ctx.lineWidth=s*.02;
    [-1,1].forEach(function(d){ctx.beginPath(); ctx.moveTo(x+d*s*.22,y-s*.45); ctx.quadraticCurveTo(x+d*s*.45,y-s*.7,x+d*s*.32,y-s*.95);
      ctx.quadraticCurveTo(x+d*s*.33,y-s*.65,x+d*s*.06,y-s*.48); ctx.closePath(); ctx.fill(); ctx.stroke();});
    ctx.fillStyle='#111'; ctx.beginPath(); ctx.moveTo(x-s*.06,y+s*.35); ctx.lineTo(x+s*.06,y+s*.35); ctx.lineTo(x,y+s*.52); ctx.fill();
- }, lines:["Ooooh, little horns! Someone has been a tiny bit naughty this year!",
-           "Thunder and lightning! A mischief maker has arrived at my door!",
-           "Those horns look great on you. Grab some candy before they grow bigger!"]},
- {name:'vampire', sfx:'funeral-bells', pitch:0.7, rate:0.85, draw:function(x,y,s){
+ }, lines:["So... you walked right up. Brave. Foolish.", "Those horns suit you. Keep them.", "Knock knock... I am already inside."]},
+ {name:'vampire', sfx:'funeral-bells', pitch:0.5, rate:0.75, draw:function(x,y,s){
    ctx.fillStyle='#120012'; ctx.beginPath(); ctx.moveTo(x-s*.45,y-s*.5); ctx.lineTo(x,y-s*.28); ctx.lineTo(x+s*.45,y-s*.5);
    ctx.lineTo(x+s*.45,y-s*.75); ctx.lineTo(x-s*.45,y-s*.75); ctx.fill();
    ctx.fillStyle='#fff'; [-1,1].forEach(function(d){ctx.beginPath(); ctx.moveTo(x+d*s*.1,y+s*.3); ctx.lineTo(x+d*s*.04,y+s*.3); ctx.lineTo(x+d*s*.07,y+s*.46); ctx.fill();});
    ctx.fillStyle='rgba(180,0,30,.85)'; ctx.beginPath(); ctx.moveTo(x-s*.55,y+s*.55); ctx.lineTo(x-s*.25,y+s*.62); ctx.lineTo(x,y+s*.75); ctx.lineTo(x+s*.25,y+s*.62); ctx.lineTo(x+s*.55,y+s*.55); ctx.lineTo(x+s*.6,y+s*.95); ctx.lineTo(x-s*.6,y+s*.95); ctx.fill();
- }, lines:["Good evening. I vant to eat... your candy! Bleh bleh!",
-           "Welcome to my castle, little bat. Nice fangs! Did you brush them?",
-           "I am a vampire. I only drink... apple juice. It's been a long night."]},
- {name:'monster', sfx:'thunder', pitch:0.5, rate:0.8, draw:function(x,y,s){
+ }, lines:["Good evening. I have been so thirsty.", "Come in. The door was never locked.", "Your heartbeat is very loud tonight."]},
+ {name:'monster', sfx:'thunder', pitch:0.4, rate:0.7, draw:function(x,y,s){
    ctx.fillStyle='rgba(60,200,60,.28)'; ctx.fillRect(x-s*.5,y-s*.6,s,s*1.15);
    ctx.fillStyle='#111'; ctx.fillRect(x-s*.5,y-s*.72,s,s*.22);
    ctx.strokeStyle='#111'; ctx.lineWidth=s*.02; ctx.beginPath();
    for(var i=0;i<5;i++){ctx.moveTo(x-s*.25+i*s*.12,y-s*.5);ctx.lineTo(x-s*.25+i*s*.12,y-s*.42);} ctx.moveTo(x-s*.3,y-s*.46); ctx.lineTo(x+s*.25,y-s*.46); ctx.stroke();
    ctx.fillStyle='#aaa'; ctx.fillRect(x-s*.68,y+s*.1,s*.18,s*.08); ctx.fillRect(x+s*.5,y+s*.1,s*.18,s*.08);
- }, lines:["It's alive! It's aliiiive! And it wants candy!",
-           "Bzzzt! Monster mode activated! Please walk like a zombie to get your treat.",
-           "Uh oh. Your bolts are loose! Better eat some chocolate to tighten them."]},
- {name:'pirate ghost', sfx:'ghost-scream', pitch:1.2, rate:0.9, draw:function(x,y,s){
+ }, lines:["It is alive... and it sees you.", "Run. Or stay. It makes no difference.", "The monster was you all along."]},
+ {name:'pirate ghost', sfx:'ghost-scream', pitch:0.6, rate:0.8, draw:function(x,y,s){
    ctx.fillStyle='#111'; ctx.beginPath(); ctx.moveTo(x-s*.8,y-s*.5); ctx.quadraticCurveTo(x,y-s*1.3,x+s*.8,y-s*.5); ctx.quadraticCurveTo(x,y-s*.75,x-s*.8,y-s*.5); ctx.fill();
    ctx.fillStyle='#fff'; ctx.font='bold '+Math.round(s*.25)+'px Arial'; ctx.textAlign='center'; ctx.fillText('☠',x,y-s*.68);
    ctx.strokeStyle='#111'; ctx.lineWidth=s*.025; ctx.beginPath(); ctx.moveTo(x-s*.5,y-s*.35); ctx.lineTo(x+s*.5,y+s*.05); ctx.stroke();
    circle(x+s*.18,y-s*.08,s*.11,'#111');
    ctx.fillStyle='#5a3311'; ctx.beginPath(); ctx.moveTo(x-s*.2,y+s*.22); ctx.quadraticCurveTo(x,y+s*.15,x+s*.2,y+s*.22); ctx.quadraticCurveTo(x,y+s*.3,x-s*.2,y+s*.22); ctx.fill();
- }, lines:["Arrr! Ghost pirate ahoy! Hand over the treasure... I mean, take the treasure!",
-           "Yo ho ho! Spooky sailor spotted! Walk the plank... to the candy bowl!",
-           "Whoooo goes there? A pirate! Shiver me skeletons!"]},
- {name:'mummy', sfx:'howling-wolf', pitch:0.8, rate:0.8, draw:function(x,y,s){
+ }, lines:["Dead men tell no tales... but they do take candy.", "You should not have come aboard.", "The sea took me. The door will take you."]},
+ {name:'mummy', sfx:'howling-wolf', pitch:0.5, rate:0.7, draw:function(x,y,s){
    ctx.strokeStyle='rgba(240,235,215,.85)'; ctx.lineWidth=s*.07;
    for(var i=0;i<6;i++){ctx.beginPath(); ctx.moveTo(x-s*.55,y-s*.55+i*s*.2); ctx.lineTo(x+s*.55,y-s*.45+i*s*.2+(i%2?-1:1)*s*.08); ctx.stroke();}
    circle(x-s*.18,y-s*.07,s*.06,'#ff0'); circle(x+s*.18,y-s*.07,s*.06,'#ff0');
- }, lines:["Mmmmph! I'm a mummy, and I forgot where I put my candy!",
-           "Ahhh! A mummy! Wait... it's just you wrapped in toilet paper. Excellent!",
-           "Three thousand years in a tomb, and the first thing I see is you! Happy Halloween!"]},
- {name:'cat', sfx:'cat-scream', pitch:1.9, rate:1.1, draw:function(x,y,s){
+ }, lines:["Three thousand years... and you woke me.", "Do not blink. I move when you blink.", "The tomb is cold. Join me."]},
+ {name:'cat', sfx:'cat-scream', pitch:0.7, rate:0.85, draw:function(x,y,s){
    ctx.fillStyle='#000'; [-1,1].forEach(function(d){ctx.beginPath(); ctx.moveTo(x+d*s*.45,y-s*.45); ctx.lineTo(x+d*s*.5,y-s*.95); ctx.lineTo(x+d*s*.15,y-s*.55); ctx.fill();});
    ctx.fillStyle='#ff5fa0'; [-1,1].forEach(function(d){ctx.beginPath(); ctx.moveTo(x+d*s*.4,y-s*.52); ctx.lineTo(x+d*s*.46,y-s*.83); ctx.lineTo(x+d*s*.22,y-s*.57); ctx.fill();});
    ctx.fillStyle='#ff5fa0'; ctx.beginPath(); ctx.moveTo(x-s*.06,y+s*.06); ctx.lineTo(x+s*.06,y+s*.06); ctx.lineTo(x,y+s*.14); ctx.fill();
    ctx.strokeStyle='#000'; ctx.lineWidth=s*.015; ctx.beginPath();
    [-1,1].forEach(function(d){for(var i=-1;i<2;i++){ctx.moveTo(x+d*s*.1,y+s*.15); ctx.lineTo(x+d*s*.55,y+s*.12+i*s*.08);}}); ctx.stroke();
- }, lines:["Meeee-OW! A spooky black cat crossed my door. Good luck... getting candy!",
-           "Purr-fect costume! You get nine lives and one piece of candy. Okay, two.",
-           "Hiss! Oh wait, I love you. Meow-ppy Halloween!"]}
+ }, lines:["The black cat crossed you first.", "Nine lives... you have one left.", "Meow means run, in cat."]}
 ];
-var IDLE=["Come closer... if you dare...","Who's there? I can see you...","Trick or treat? Step right up!"];
+var IDLE=[]; // dormant now: no shouting at an empty door
 
 /* ---------- DETECTION ---------- */
 function gray(rgba){
@@ -430,10 +439,20 @@ function detect(){
 }
 
 /* ---------- MAIN LOOP ---------- */
-var faces=[], tracked=[], lastFace=0, firstFace=0, present=false, current=0, lastAnnounce=0, idleT=0;
+var faces=[], tracked=[], lastFace=0, firstFace=0, present=false, current=0, lastAnnounce=0, idleT=0, closeFirst=0, cooldownUntil=0, flash=0;
 var order=[]; function nextCostume(){ if(!order.length){order=COSTUMES.map(function(_,i){return i;}).sort(function(){return Math.random()-.5;});} return order.pop(); }
 var lineIdx={};
+function scare(){
+  current=nextCostume(); var c=COSTUMES[current];
+  lineIdx[current]=((lineIdx[current]||0)+1)%c.lines.length;
+  var line=c.lines[lineIdx[current]];
+  flash=1;
+  playScare();
+  setTimeout(function(){say(line,c.pitch,c.rate);},1100);
+  cap.textContent=line; lastAnnounce=Date.now();
+}
 function announce(){
+  // repeat visitor still standing there: new costume + sound, no jump-scare flash
   current=nextCostume(); var c=COSTUMES[current];
   lineIdx[current]=((lineIdx[current]||0)+1)%c.lines.length;
   var dur=playSfx(c.sfx)||1;
@@ -457,6 +476,20 @@ function loop(){
   // spooky tint + vignette
   var vg=ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*.3,W/2,H/2,Math.max(W,H)*.75);
   vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(40,0,60,.75)'); ctx.fillStyle=vg; ctx.fillRect(0,0,W,H);
+  // dormant: nearly black until someone walks up; slow fog drifts across the dark
+  if(!present){
+    ctx.fillStyle='rgba(0,0,0,0.86)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='rgba(120,110,160,0.07)';
+    for(var fi=0;fi<3;fi++){
+      var fx=((now*0.02*(fi+1)+fi*W*0.4)%(W+400))-200, fy=H*(0.25+fi*0.25)+Math.sin(now/3000+fi*2)*H*0.04;
+      ctx.beginPath(); ctx.ellipse(fx,fy,W*0.28,H*0.09,0,0,Math.PI*2); ctx.fill();
+    }
+  } else {
+    // haunted: flicker + red edge
+    if(Math.random()<0.03){ ctx.fillStyle='rgba(255,255,255,0.10)'; ctx.fillRect(0,0,W,H); }
+    var rg=ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*0.35,W/2,H/2,Math.max(W,H)*0.75);
+    rg.addColorStop(0,'rgba(0,0,0,0)'); rg.addColorStop(1,'rgba(120,0,0,0.35)'); ctx.fillStyle=rg; ctx.fillRect(0,0,W,H);
+  }
   // detect every 2nd frame on a small copy
   var now=Date.now();
   if(frame++%2===0){
@@ -473,23 +506,33 @@ function loop(){
       if(best&&bd<f.s){return {x:best.x*.6+f.x*.4,y:best.y*.6+f.y*.4,s:best.s*.7+f.s*.3};} return f;});
   }
   if(canDetect){
-    if(faces.length){ if(!firstFace) firstFace=now; lastFace=now; }
-    else if(now-lastFace>600) firstFace=0;
-    if(!present && firstFace && now-firstFace>350){ present=true; announce(); }
-    if(present && now-lastFace>4000){ present=false; cap.textContent=''; idleT=now; }
+    // proximity = face is BIG on screen (walked right up), not just visible far away
+    var closeFace=faces.filter(function(f){ return f.s>Math.min(W,H)*0.20; });
+    if(closeFace.length){ if(!closeFirst) closeFirst=now; lastFace=now; }
+    else if(now-lastFace>600){ closeFirst=0; firstFace=0; }
+    if(!present && closeFace.length && closeFirst && now-closeFirst>900 && now>=cooldownUntil){ present=true; scare(); }
+    if(present && now-lastFace>4000){ present=false; cap.textContent=''; idleT=now; cooldownUntil=now+5000; closeFirst=0; }
     if(present && now-lastAnnounce>15000){ announce(); } // same kids hanging around -> new costume
-    if(present || now-lastFace<1200) tracked.forEach(function(f){ COSTUMES[current].draw(f.x,f.y,f.s); });
+    if(present || now-lastFace<1200) tracked.forEach(function(f){
+      COSTUMES[current].draw(f.x,f.y,f.s);
+      // glowing red eyes on every face while haunted
+      var ex=f.s*0.18, ey=f.y-f.s*0.06, er=Math.max(2,f.s*0.035);
+      ctx.save(); ctx.shadowColor='#f00'; ctx.shadowBlur=f.s*0.12;
+      ctx.fillStyle='#ff1818'; ctx.beginPath(); ctx.arc(f.x-ex,ey,er,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(f.x+ex,ey,er,0,Math.PI*2); ctx.fill(); ctx.restore();
+    });
   } else {
-    // timer mode: costume in the middle, changes every 20s
-    if(now-lastAnnounce>20000) announce();
+    // timer mode (no face tracking): scare on a slow timer instead of chattering every 20s
+    if(now-lastAnnounce>45000) scare();
     COSTUMES[current].draw(W/2,H*.42,Math.min(W,H)*.35);
   }
   if(!present && canDetect){
-    var t=Math.floor(now/5000)%IDLE.length;
-    ctx.fillStyle='rgba(255,122,0,'+(0.55+0.45*Math.sin(now/400))+')';
-    ctx.font='bold '+Math.round(Math.min(W,H)*.075)+'px Arial'; ctx.textAlign='center';
-    ctx.fillText(IDLE[t],W/2,H*.12);
+    // dormant: stay dark and silent. Faint fog only.
+    ctx.fillStyle='rgba(150,150,180,0.10)';
+    ctx.font='bold '+Math.round(Math.min(W,H)*.03)+'px Arial'; ctx.textAlign='center';
+    ctx.fillText('...',W/2,H*.12);
   }
+  if(flash>0){ ctx.fillStyle='rgba(255,255,255,'+(flash*0.65)+')'; ctx.fillRect(0,0,W,H); flash=Math.max(0,flash-0.05); }
 }
 
 /* ---------- KEEP SCREEN ON ---------- */
@@ -504,10 +547,11 @@ function begin(){
   document.getElementById('setup').style.display='none';
   goFull(); keepAwake();
   if(!running){ running=true; loop(); }
-  playSfx('howling-wolf'); setTimeout(function(){ if(!present) say("Spooky door cam is awake. Bring on the trick or treaters!",0.8,0.9);},2500);
+  info.textContent='\u25CF ARMED \u2014 dark and silent until someone walks up';
+  cap.textContent='';
 }
 var msg=document.getElementById('msg');
-document.getElementById('testSnd').onclick=function(){ audioInit(); playSfx('evil-laugh'); say("Happy Halloween! Is this loud enough?",1.4,1); };
+document.getElementById('testSnd').onclick=function(){ audioInit(); playScare(); say("You came closer... big mistake.",0.5,0.8); cap.textContent='You came closer... big mistake.'; };
 document.getElementById('useCam').onclick=function(){
   audioInit();
   var md=navigator.mediaDevices;
